@@ -61,6 +61,35 @@ class API {
     }
 
     private function handleLogin($data) {
+        $email = $data['email'] ?? '';
+        $password = $data['password'] ?? '';
+
+        if (empty($email) || empty($password)) {
+            $this->returnError('No empty fields are allowed.');
+        }
+
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $this->returnError('Invalid email address.');
+        }
+
+        $pstmt = $this -> mysqli->prepare('SELECT * FROM Users WHERE email = ?');
+        if (!$pstmt) {
+            $this->returnError('Database error: ' . $this -> mysqli->error, 500);
+        }
+        $pstmt->bind_param('s', $email);
+        $pstmt->execute();
+        $result = $pstmt->get_result();
+        $user = $result->fetch_assoc();
+
+        if (!$user) {
+            $this->returnError('Email or Password is invalid.', 401);
+        }
+
+        $hashedPassword = hash('sha256', $user['salt'] . $password);
+        if ($hashedPassword !== $user['password']) {
+            $this->returnError('Your Email or Password is INVALID.', 401);
+        }
+
         http_response_code(200);
         echo json_encode([
             'status' => 'success',
