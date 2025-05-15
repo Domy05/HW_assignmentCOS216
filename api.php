@@ -11,7 +11,7 @@ class API {
     private $mysqli;
 
     public function __construct(){
-        $this -> mysqli = DB::getInstance() -> connect();
+        $this -> mysqli = Database::getInstance() -> connect();
     }
 
     private function returnError($message, $code = 400) {
@@ -33,6 +33,9 @@ class API {
 
         if($type === 'Login'){
             $this -> handleLogin($data);
+        }
+        elseif($type === 'Register'){
+            $this -> handleRegister($data);
         }
         elseif($type === 'CreateOrder'){
             $this -> handleCreateOrder($data);
@@ -65,6 +68,18 @@ class API {
             'data' => [
                 'apikey' => $user['api_key'],
                 'name' => $user['name']
+            ]
+        ]);
+        exit;
+    }
+
+    private function handleRegister($data) {
+        http_response_code(201);
+        echo json_encode([
+            'status' => 'success',
+            'timestamp' => time(),
+            'data' => [
+                'message' => 'Registration successful.'
             ]
         ]);
         exit;
