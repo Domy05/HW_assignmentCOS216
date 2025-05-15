@@ -87,7 +87,7 @@ class API {
 
         $hashedPassword = hash('sha256', $user['salt'] . $password);
         if ($hashedPassword !== $user['password']) {
-            $this->returnError('Your Email or Password is INVALID.', 401);
+            $this->returnError('Email or Password is invalid.', 401);
         }
 
         http_response_code(200);
@@ -96,13 +96,54 @@ class API {
             'timestamp' => time(),
             'data' => [
                 'apikey' => $user['api_key'],
-                'name' => $user['name']
+                'username' => $user['username']
             ]
         ]);
         exit;
     }
 
     private function handleRegister($data) {
+        $username = $data['username'] ?? '';
+        $email = $data['email'] ?? '';
+        $password = $data['password'] ?? '';
+        $userType = $data['user_type'] ?? '';
+
+        if (empty($username) || empty($email) || empty($password) || empty($userType)) {
+            $this->returnError('No empty fields are allowed.');
+        }
+
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $this->returnError('Invalid email address.');
+        }
+
+        $passwordRegex = '/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&#_])[A-Za-z\d@$!%*?&#_]{8,}$/';
+        if (!preg_match($passwordRegex, $password)) {
+            $this->returnError('Password should be longer than 8 characters, contain upper and lower case letters, at least one digit and one symbol (Symbols you can use: @ $ ! % * ? & # _).');
+        }
+
+        $pstmt = $this -> mysqli->prepare('SELECT * FROM Users WHERE email = ?');
+        if (!$pstmt) {
+            $this->returnError('Database error: ' . $this -> mysqli->error, 500);
+        }
+        $pstmt->bind_param('s', $email);
+        $pstmt->execute();
+        $pstmt->store_result();
+        if ($pstmt->num_rows > 0) {
+            $this->returnError('Email is already in use.', 409);
+        }
+
+        $salt = bin2hex(random_bytes(16));
+        $hashedPassword = hash('sha256', $salt . $password);
+
+        $pstmt = $this -> mysqli->prepare('INSERT INTO Users (username, password, email, type) VALUES (?, ?, ?, ?)');
+        if (!$pstmt) {
+            $this->returnError('Database error: ' . $this -> mysqli->error, 500);
+        }
+        $pstmt->bind_param('ssss', $username, $hashedPassword, $email, $userType);
+        if (!$pstmt->execute()) {
+            $this->returnError('Failed to register user.', 500);
+        }
+
         http_response_code(201);
         echo json_encode([
             'status' => 'success',
