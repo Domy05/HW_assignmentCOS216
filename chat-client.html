@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Multi-User Chat Client</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body>
+  <input id="msg" autocomplete="off" /><button onclick="sendMsg()">Send</button>
+  <ul id="messages"></ul>
+  <script>
+    const socket = io('http://localhost:3000');
+    socket.on('chat message', function(data) {
+      const li = document.createElement('li');
+      li.textContent = data.id + ': ' + data.message;
+      document.getElementById('messages').appendChild(li);
+    });
+    function sendMsg() {
+      const msg = document.getElementById('msg').value;
+      socket.emit('chat message', msg);
+      document.getElementById('msg').value = '';
+    }
+  </script>
+</body>
+</html>
