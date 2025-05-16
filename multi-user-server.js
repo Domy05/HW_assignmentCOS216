@@ -1,13 +1,18 @@
+const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const readline = require('readline'); // Get port from command-line argument or prompt
+const fetch = require('node-fetch');
+
+const ourAPIurl = 'http://localhost/api.php';
 
 function isValidPort(port) {
   return Number.isInteger(port) && port >= 1024 && port <= 49151;
 }
 
 function startServer(port) {
-    const server = http.createServer(); // Create HTTP server
+    const app = express();
+    const server = http.createServer(app); // Create HTTP server
 
     // Attach socket.io to the server
     const io = new Server(server, {
@@ -16,6 +21,34 @@ function startServer(port) {
             methods: ["GET", "POST"]
         }
     });
+
+    // Example API call functions
+    async function createOrder(orderData) {
+        const response = await fetch(ourAPIurl, {
+            method: 'POST',
+            headers: {'Content-Type' : 'application/json'},
+            body: JSON.stringify({type : 'CreateOrder', ...orderData})
+        });
+        return response.json();
+    }
+
+    async function updateOrder(orderData) {
+        const response = await fetch(ourAPIurl, {
+            method: 'POST',
+            headers: {'Content-Type' : 'application/json'},
+            body: JSON.stringify({type : 'UpdateOrder', ...orderData})
+        });
+        return response.json();
+    }
+
+    async function getAllOrders() {
+        const response = await fetch(ourAPIurl, {
+            method: 'POST',
+            headers: {'Content-Type' : 'application/json'},
+            body: JSON.stringify({type : 'GetAllOrders'})
+        });
+        return response.json();
+    }
 
     // Listen for client connections
     io.on('connection', (socket) => {
@@ -28,6 +61,21 @@ function startServer(port) {
                 id: socket.id, 
                 message: msg 
             });
+        });
+
+        socket.on('create order', async (orderData) => {
+            const result = await createOrder(orderData);
+            socket.emit('order created', result);
+        });
+
+        socket.on('update order', async (orderData) => {
+            const result = await updateOrder(orderData);
+            socket.emit('order updated', result);
+        });
+
+        socket.on('get all orders', async () => {
+            const result = await getAllOrders();
+            socket.emit('all orders', result);
         });
 
         // Notify when a user disconnects
