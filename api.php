@@ -55,6 +55,15 @@ class API {
         elseif($type === 'GetAllDrones'){
             $this -> handleGetAllDrones($data);
         }
+        elseif($type === 'ResetOrdersStorage'){
+            $this -> handleResetOrdersToStorage($data);
+        }
+        elseif($type === 'MarkDroneCrashed'){
+            $this -> handleMarkDroneCrashed($data);
+        }
+        elseif($type === 'GetCurrentlyDelivering'){
+            $this -> handleGetCurrentlyDelivering($data);
+        }
         else{
             $this->returnError('Invalid request type.');
         }
@@ -200,6 +209,20 @@ class API {
     }
 
     private function handleGetAllOrders($data) {
+        $stmt = $this->mysqli->prepare("SELECT * FROM Orders WHERE state='Storage'");
+        if (!$stmt) {
+            $this->returnError('Database error: ' . $this->mysqli->error, 500);
+        }
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $orders = [];
+        while ($row = $result->fetch_assoc()) {
+            $orders[] = $row;
+        }
+        $stmt->close();
+        if (empty($orders)) {
+            $this->returnError('No orders found.', 404);
+        }
         http_response_code(200);
         echo json_encode([
             'status' => 'success',
@@ -210,6 +233,20 @@ class API {
     }
 
     private function handleGetAllDrones($data) {
+        $stmt = $this->mysqli->prepare("SELECT * FROM Drones");
+        if (!$stmt) {
+            $this->returnError('Database error: ' . $this->mysqli->error, 500);
+        }
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $drones = [];
+        while ($row = $result->fetch_assoc()) {
+            $drones[] = $row;
+        }
+        $stmt->close();
+        if (empty($drones)) {
+            $this->returnError('No drones found.', 404);
+        }
         http_response_code(200);
         echo json_encode([
             'status' => 'success',
@@ -217,6 +254,74 @@ class API {
             'data' => $drones
         ]);
         exit;
+    }
+
+    public function resetOrdersToStorage($courierUsername) {
+        $stmt = $this->mysqli->prepare("UPDATE Orders SET state='Storage' AND state='Out for delivery'");
+        // $stmt->bind_param("s", $trackingNum);
+        // if ($stmt->execute()) {
+        //     echo json_encode([
+        //         'status' => 'success',
+        //         'timestamp' => time(),
+        //         'data' => 'Orders reset to Storage'
+        //     ]);
+        // } else {
+        //     $this->returnError('Failed to reset orders');
+        // }
+        echo json_encode([
+            'status' => 'success',
+            'timestamp' => time(),
+            'data' => 'Orders reset to Storage'
+        ]);
+        $stmt->close();
+        exit;
+    }
+
+    public function markDroneCrashed($courierID) {
+        // Example: Mark the drone as crashed for this courier
+        $stmt = $this->mysqli->prepare("UPDATE Drones SET is_available='false' WHERE current_operator_id=?");
+        $stmt->bind_param("s", $courierID);
+        if ($stmt->execute()) {
+            echo json_encode([
+                'status' => 'success',
+                'timestamp' => time(),
+                'data' => 'Drone has crashed'
+            ]);
+        } else {
+            $this->returnError('Failed to mark drone as crashed');
+        }
+        $stmt->close();
+        exit;
+    }
+
+    public function getCurrentlyDelivering() {
+        $sql = "SELECT o.order_id, p.title, o.destination_latitude, o.destination_longitude, u.username AS recipient_username, u.email AS recipient_email
+                FROM Users u
+                JOIN Orders o ON u.id = o.customer_id
+                JOIN Orders_Products op ON o.order_id = op.order_id
+                JOIN Products p ON op.product_id = p.product_id
+                WHERE o.status = 'Out for delivery'";
+        $result = $this->mysqli->query($sql);
+        $orders = [];
+        while ($row = $result->fetch_assoc()) {
+            $orders[] = [
+                'orderId' => $row['order_id'],
+                'product' => $row['title'],
+                'destination' => [
+                    'latitude' => $row['destination_latitude'],
+                    'longitude' => $row['destination_longitude']
+                ],
+                'recipient' => [
+                    'username' => $row['recipient_username'],
+                    'email' => $row['recipient_email']
+                ]
+            ];
+        }
+        echo json_encode([
+            'status' => 'success',
+            'timestamp' => time(),
+            'data' => $orders
+        ]);
     }
 }
 
