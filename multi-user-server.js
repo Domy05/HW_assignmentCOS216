@@ -30,6 +30,35 @@ function startServer(port) {
         }
     });
 
+    // Listen for QUIT command from the terminal
+    const rlQuit = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+
+    function listenForQuit() {
+        rlQuit.question('Type QUIT to shut down the server: ', (answer) => {
+            if (answer.trim().toUpperCase() === 'QUIT') {
+                // 1. Broadcast to all clients
+                io.emit('server shutdown', { message: 'Server is going offline. All connections will be closed.' });
+                // 2. Disconnect all sockets
+                for (const [id, socket] of io.sockets.sockets) {
+                    socket.disconnect(true);
+                }
+                // 3. Close the server after a short delay to allow message delivery
+                setTimeout(() => {
+                    server.close(() => {
+                        console.log('Server has shut down.');
+                        process.exit(0);
+                    });
+                }, 1000);
+            } else {
+                listenForQuit();
+            }
+        });
+    }
+    listenForQuit();
+
     // Example API call functions
     async function createOrder(orderData) {
         const response = await fetch(ourAPIurl, {
@@ -63,7 +92,10 @@ function startServer(port) {
         await fetch(ourAPIurl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'ResetOrdersToStorage', courier: courierUsername })
+            body: JSON.stringify({ 
+                type: 'ResetOrdersToStorage', 
+                courier: courierUsername 
+            })
         });
     }
 
@@ -72,8 +104,51 @@ function startServer(port) {
         await fetch(ourAPIurl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'MarkDroneCrashed', courier: courierUsername })
+            body: JSON.stringify({ 
+                type: 'MarkDroneCrashed', 
+                courier: courierUsername 
+            })
         });
+    }
+
+    async function getCurrentlyDelivering() {
+        const response = await fetch(ourAPIurl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'GetCurrentlyDelivering' })
+        });
+        return response.json();
+    }
+
+    async function getDroneStatus(droneId) {
+        const response = await fetch(ourAPIurl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'GetAllDrones' })
+        });
+        const allDrones = await response.json();
+        if (allDrones.status === 'success' && Array.isArray(allDrones.data)) {
+            const drone = allDrones.data.find(d => d.id == droneId);
+            if (drone) {
+                // Return only the required fields
+                return {
+                    status: 'success',
+                    data: {
+                        battery_level: drone.battery_level,
+                        altitude: drone.altitude,
+                        operator: drone.current_operator_id,
+                        gps: {
+                            latitude: drone.latest_latitude,
+                            longitude: drone.latest_longitude
+                        }
+                    }
+                };
+            } else {
+                return { status: 'error', data: 'Drone not found' };
+            }
+        } else {
+            return { status: 'error', data: 'Could not retrieve drones' };
+        }
     }
 
     // Listen for client connections
@@ -104,6 +179,74 @@ function startServer(port) {
             }
         });
 
+        socket.on('drone status request', async (droneId) => {
+            try {
+                const result = await getDroneStatus(droneId);
+                socket.emit('drone status result', result);
+            } catch (err) {
+                socket.emit('drone status result', { status: 'error', data: err.message });
+            }
+        });
+
+        // Listen for drone position updates from couriers
+        socket.on('drone position update', async (data) => {
+            // data: { droneId, latitude, longitude, altitude, battery_level }
+            // 1. Update the drone's position in the database
+            await fetch(ourAPIurl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    type: 'UpdateDrone',
+                    droneId: data.droneId,
+                    latitude: data.latitude,
+                    longitude: data.longitude,
+                    altitude: data.altitude,
+                    battery_level: data.battery_level
+                })
+            });
+            // 2. Broadcast the new position to all clients (or filter for relevant users)
+            io.emit('drone position update', data);
+        });
+
+        // When a courier starts delivery (you may trigger this from an order update)
+        socket.on('order out for delivery', (orderInfo) => {
+            // orderInfo: { orderId, recipientUsername, ... }
+            // Notify the recipient
+            const recipientSocketId = userMap.get(orderInfo.recipientUsername);
+            if (recipientSocketId) {
+                io.to(recipientSocketId).emit('package on the way', {
+                    orderId: orderInfo.orderId,
+                    message: 'Your package is on its way!'
+                });
+            }
+        });
+
+        // Courier selects order to deliver
+        socket.on('start delivery', async ({ orderId, recipientUsername }) => {
+            // 1. Update order status via API
+            await updateOrder({ orderId, state: 'Out for delivery' });
+            // 2. Notify recipient
+            const recipientSocketId = userMap.get(recipientUsername);
+            if (recipientSocketId) {
+                io.to(recipientSocketId).emit('package on the way', {
+                    orderId,
+                    message: 'Your package is on its way!'
+                });
+            }
+        });
+
+        // Courier marks order as delivered
+        socket.on('order delivered', async ({ orderId, recipientUsername }) => {
+            await updateOrder({ orderId, state: 'Delivered' });
+            const recipientSocketId = userMap.get(recipientUsername);
+            if (recipientSocketId) {
+                io.to(recipientSocketId).emit('package delivered', {
+                    orderId,
+                    message: 'Your package has been delivered!'
+                });
+            }
+        });
+
         socket.on('create order', async (orderData) => {
             const result = await createOrder(orderData);
             socket.emit('order created', result);
@@ -117,6 +260,15 @@ function startServer(port) {
         socket.on('get all orders', async () => {
             const result = await getAllOrders();
             socket.emit('all orders', result);
+        });
+
+        socket.on('currently delivering', async () => {
+            try {
+                const result = await getCurrentlyDelivering();
+                socket.emit('currently delivering result', result);
+            } catch (err) {
+                socket.emit('currently delivering result', { status: 'error', data: err.message });
+            }
         });
 
         // Notify when a user disconnects
